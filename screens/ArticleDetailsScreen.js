@@ -8,37 +8,41 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import RenderHTML from "react-native-render-html";
 import { updateSaveStatus, getPostById } from "../api/db";
-import { getUserToken } from "../api/storageService";
-import { getUserSubscription } from "../utils/membershipService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 
 export default function ArticleDetailsScreen({ route, navigation }) {
   const { article } = route.params || {};
   const { width } = useWindowDimensions();
+
   const [isSaved, setIsSaved] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [subscription, setSubscription] = useState(null);
+  const [loadingSubscription, setLoadingSubscription] = useState(true);
 
-  // Load user + subscription when screen gains focus
+  // Fetch user and subscription info
   useFocusEffect(
     React.useCallback(() => {
       const fetchSession = async () => {
         try {
-          const allKeys = await AsyncStorage.getAllKeys();
-          console.log("🧩 All storage keys:", allKeys);
+          const userStr = await AsyncStorage.getItem("user");
+          if (!userStr) return;
 
-          const token = await getUserToken();
-          const sub = await getUserSubscription();
-          setIsLoggedIn(!!token);
-          setSubscription(sub);
-          console.log("🔁 Refreshed subscription:", sub);
+          const user = JSON.parse(userStr);
+          setIsLoggedIn(!!user?.email);
+          setSubscription(
+            user?.membership || { level_id: 0, level_name: "Free", enddate: null }
+          );
+          console.log("🔁 Refreshed subscription:", user?.membership);
         } catch (err) {
           console.error("Failed to fetch session info:", err);
+        } finally {
+          setLoadingSubscription(false);
         }
       };
       fetchSession();
@@ -74,30 +78,39 @@ export default function ArticleDetailsScreen({ route, navigation }) {
     }
   };
 
-  // ---- Access Logic ----
-  console.log("🧾 Subscription from storage:", subscription);
-  let accessState = "allowed";
-
-  const level = subscription?.membership_level || "0";
-  let expiry = subscription?.membership_expiry || 0;
-
-  // Normalize expiry to milliseconds
-  expiry = Number(expiry);
-  if (expiry && expiry < 2_000_000_000) expiry *= 1000;
-
-  const hasActiveSub = level === "2" && expiry > Date.now();
-
-  if (article?.membership_level === 1 && !isLoggedIn) {
-    accessState = "loginRequired";
-  } else if (article?.membership_level === 2) {
-    if (!isLoggedIn) {
-      accessState = "loginRequired";
-    } else if (!hasActiveSub) {
-      accessState = "subscriptionRequired";
-    }
+  // Don't render anything until subscription is loaded
+  if (loadingSubscription) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#FF4500" />
+      </View>
+    );
   }
 
-  // ---- Show Teaser ----
+  // ---- Access Logic ----
+  // ---- Access Logic (REFINED) ----
+let accessState = "allowed";
+
+// Logged in?
+if (!isLoggedIn) {
+  accessState = "loginRequired";
+} else {
+  const level = Number(subscription?.level_id ?? 0);
+  let expiry = subscription?.enddate ? Number(subscription.enddate) : 0;
+
+  // normalize expiry (seconds → ms)
+  if (expiry && expiry < 2_000_000_000) expiry *= 1000;
+
+  const hasActivePremium =
+    level === 2 && expiry > Date.now();
+
+  if (!hasActivePremium) {
+    accessState = "subscriptionRequired";
+  }
+}
+
+
+  // ---- Helper to show teaser ----
   const getTeaser = (html) => {
     if (!html) return "";
     const plainText = html.replace(/<[^>]+>/g, "");
@@ -191,7 +204,6 @@ export default function ArticleDetailsScreen({ route, navigation }) {
           <Text style={styles.followers}>Contributor</Text>
         </View>
 
-        {/* Save Icon */}
         <TouchableOpacity onPress={toggleSave}>
           <Ionicons
             name={isSaved ? "bookmark" : "bookmark-outline"}
@@ -201,7 +213,7 @@ export default function ArticleDetailsScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* ---- Content / Restricted Access ---- */}
+      {/* Content / Restricted Access */}
       {accessState !== "allowed" ? (
         <>
           {article?.content ? (

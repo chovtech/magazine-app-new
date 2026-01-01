@@ -5,31 +5,25 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CommonActions } from "@react-navigation/native";
 
 export default function LogoutScreen({ navigation }) {
-  const handleLogout = async () => {
-    try {
-      await AsyncStorage.removeItem("userToken");
-      await AsyncStorage.removeItem("user");
+ const handleLogout = async () => {
+  try {
+    // ✅ Remove auth only
+   // await AsyncStorage.removeItem("user");
+    await AsyncStorage.clear();
 
-      const guestUser = {
-        username: "guest",
-        name: "Guest User",
-        avatar: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-        membership_level: 0,
-      };
-      await AsyncStorage.setItem("user", JSON.stringify(guestUser));
+    // Reset stack to MainTabs
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: "MainTabs" }],
+      })
+    );
+  } catch (err) {
+    console.error("Logout error:", err);
+    Alert.alert("Error", "Something went wrong while logging out.");
+  }
+};
 
-      // Reset stack to MainTabs only
-      navigation.dispatch(
-        CommonActions.reset({
-          index: 0,
-          routes: [{ name: "MainTabs" }],
-        })
-      );
-    } catch (err) {
-      console.error("Logout error:", err);
-      Alert.alert("Error", "Something went wrong while logging out.");
-    }
-  };
 
   return (
     <View style={styles.container}>

@@ -49,9 +49,9 @@ function normalizePost(post) {
     date: post.date,
     modified: post.modified,
     views: post.views ?? post.meta?.views ?? 0,
-    // 👇 leave membership_level undefined → will be set in syncPosts()
   };
 }
+
 
 /**
  * Fetch latest posts
@@ -75,23 +75,9 @@ export async function syncPosts(limit = 10) {
   try {
     const posts = await fetchPosts(limit);
     if (posts.length > 0) {
-      // Shuffle array
-      const shuffled = posts
-        .map((p) => ({ ...p, sort: Math.random() }))
-        .sort((a, b) => a.sort - b.sort)
-        .map(({ sort, ...rest }) => rest);
-
-      // Assign membership levels: 20% free, 80% premium
-      const taggedPosts = shuffled.map((post) => {
-        const rand = Math.random();
-        let membership_level = 2; // default premium
-        if (rand < 0.2) membership_level = 0; // 20% free
-        return { ...post, membership_level };
-      });
-
-      await savePosts(taggedPosts);
-      console.log(`✅ Synced ${taggedPosts.length} posts into SQLite (20% free, 80% premium)`);
-      return taggedPosts.length;
+      await savePosts(posts);
+      console.log(`✅ Synced ${posts.length} posts into SQLite`);
+      return posts.length;
     }
     return 0;
   } catch (err) {
@@ -99,6 +85,7 @@ export async function syncPosts(limit = 10) {
     return 0;
   }
 }
+
 
 
 /**
@@ -120,16 +107,10 @@ export async function fetchSinglePost(id) {
   try {
     const raw = await fetchFromApi(`${BASE_URL}/posts/${id}?_embed`);
     if (!raw) return null;
-
-    const normalized = normalizePost(raw);
-
-    // 👇 Assign membership level (fallback: premium if not in first 6 batch)
-    return {
-      ...normalized,
-      membership_level: 2,
-    };
+    return normalizePost(raw);
   } catch (err) {
     console.error("fetchSinglePost error:", err.message);
     return null;
   }
 }
+

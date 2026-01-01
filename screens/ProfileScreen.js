@@ -44,7 +44,7 @@ export default function ProfileScreen({ navigation }) {
       loadUser(); // ✅ Always refresh avatar + details
 
       // Only handle back for logged-in users
-      if (!user || user.username === "guest") return;
+      if (!user) return;
 
       const onBackPress = () => {
         navigation.navigate("MainTabs");
@@ -61,7 +61,7 @@ export default function ProfileScreen({ navigation }) {
   );
 
   // Guest view
-  if (!user || user.username === "guest") {
+  if (!user) {
     return (
       <View style={styles.guestContainer}>
         <Ionicons

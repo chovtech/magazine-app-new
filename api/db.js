@@ -3,7 +3,6 @@ import * as SQLite from "expo-sqlite";
 
 const db = SQLite.openDatabaseSync("magazine.db");
 
-// Initialize DB + Tables
 export async function initDB() {
   try {
     await db.execAsync(`
@@ -20,8 +19,7 @@ export async function initDB() {
         modified TEXT,
         content TEXT,
         views INTEGER DEFAULT 0,
-        saved INTEGER DEFAULT 0,   -- 0 = not saved, 1 = saved
-        membership_level INTEGER DEFAULT 0 -- 0 = public, 1 = login, 2 = premium
+        saved INTEGER DEFAULT 0
       );
 
       CREATE INDEX IF NOT EXISTS idx_posts_date ON posts (date DESC);
@@ -34,27 +32,11 @@ export async function initDB() {
   }
 }
 
-/**
- * Assign membership levels randomly by ratio:
- * - 10% → public (0)
- * - 30% → login required (1)
- * - 60% → premium (2)
- */
-function assignMembershipLevels(posts) {
-  return posts.map((post) => {
-    const rand = Math.random();
-    let membership_level = 2; // default premium
-    if (rand < 0.1) membership_level = 0;      // 10% free
-    else if (rand < 0.4) membership_level = 1; // next 30%
-    return { ...post, membership_level };
-  });
-}
 
-// Save posts (insert or update if modified)
+
+
 export async function savePosts(posts) {
-  const processedPosts = assignMembershipLevels(posts);
-
-  for (const post of processedPosts) {
+  for (const post of posts) {
     try {
       const existing = await db.getFirstAsync(
         "SELECT modified FROM posts WHERE id = ?",
@@ -63,9 +45,9 @@ export async function savePosts(posts) {
 
       if (!existing || existing.modified < post.modified) {
         await db.runAsync(
-          `INSERT OR REPLACE INTO posts 
-            (id, title, slug, excerpt, image, category, author, authorImage, date, modified, content, views, saved, membership_level) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT saved FROM posts WHERE id = ?), 0), ?)`,
+          `INSERT OR REPLACE INTO posts
+           (id, title, slug, excerpt, image, category, author, authorImage, date, modified, content, views, saved)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT saved FROM posts WHERE id = ?), 0))`,
           [
             post.id,
             post.title,
@@ -80,7 +62,6 @@ export async function savePosts(posts) {
             post.content,
             post.views ?? 0,
             post.id, // preserve saved status
-            post.membership_level ?? 2, // default premium if missing
           ]
         );
       }
@@ -89,6 +70,7 @@ export async function savePosts(posts) {
     }
   }
 }
+
 
 // Update save status for a post
 export async function updateSaveStatus(postId, isSaved) {

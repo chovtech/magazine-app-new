@@ -1,23 +1,27 @@
-// membershipService.js
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// API endpoint to fetch membership info
 const API_URL = "https://contemporaryworld.ipcr.gov.ng/wp-json/ipcr/v1/membership";
 
 /**
- * Fetch membership from backend and update the `user` object in storage
+ * Fetch membership from backend using email + password,
+ * then update the `user` object in AsyncStorage
  */
 export async function fetchMembership() {
   try {
-    const token = await AsyncStorage.getItem("userToken");
-    if (!token) return null;
+    const userStr = await AsyncStorage.getItem("user");
+    if (!userStr) return null;
 
+    const user = JSON.parse(userStr);
+    if (!user?.email || !user?.auth?.password) return null;
+
+    // Send email + password instead of token
     const response = await fetch(API_URL, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: user.email,
+        password: user.auth.password,
+      }),
     });
 
     if (!response.ok) {
@@ -27,30 +31,18 @@ export async function fetchMembership() {
 
     const data = await response.json();
 
-    // Read current user
-    const userStr = await AsyncStorage.getItem("user");
-    const user = userStr ? JSON.parse(userStr) : {};
-
     // Normalize membership data
-    const membership_level = data.membership_level || data.level_id || "0";
-    const membership_name = data.membership_name || data.level_name || "Free";
-    let membership_expiry = Number(data.membership_expiry || data.enddate || 0);
+    const membership = {
+      level_id: Number(data.level_id ?? 0),
+      level_name: data.level_name || "Free",
+      enddate: data.enddate ? Number(data.enddate) : null,
+    };
 
-    // Convert seconds to milliseconds if needed
-    if (membership_expiry < 2000000000) membership_expiry *= 1000;
-
-    // Update user object
-    user.membership_level = String(membership_level);
-    user.membership_name = membership_name;
-    user.membership_expiry = membership_expiry;
-
+    // Update user object in AsyncStorage
+    user.membership = membership;
     await AsyncStorage.setItem("user", JSON.stringify(user));
 
-    return {
-      membership_level: String(membership_level),
-      membership_name,
-      membership_expiry,
-    };
+    return membership;
   } catch (err) {
     console.error("Error fetching membership:", err);
     return null;
@@ -58,28 +50,27 @@ export async function fetchMembership() {
 }
 
 /**
- * Read normalized subscription directly from `user` object
+ * Read normalized membership directly from `user` object
  */
-export async function getUserSubscription() {
+export async function getUserMembership() {
   try {
     const userStr = await AsyncStorage.getItem("user");
     if (!userStr) return null;
 
     const user = JSON.parse(userStr);
-
-    let membership_expiry = Number(user.membership_expiry || 0);
-    // Convert seconds to milliseconds if needed
-    if (membership_expiry && membership_expiry < 2000000000) {
-      membership_expiry *= 1000;
-    }
+    const membership = user?.membership ?? {
+      level_id: 0,
+      level_name: "Free",
+      enddate: null,
+    };
 
     return {
-      membership_level: String(user.membership_level || "0"),
-      membership_name: user.membership_name || "Free",
-      membership_expiry,
+      level_id: Number(membership.level_id),
+      level_name: membership.level_name,
+      enddate: membership.enddate,
     };
   } catch (err) {
-    console.error("Failed to load subscription from storage:", err);
+    console.error("Failed to load membership from storage:", err);
     return null;
   }
 }

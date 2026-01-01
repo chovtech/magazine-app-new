@@ -11,10 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Purchases from "react-native-purchases";
-import {
-  fetchMembership,
-  getStoredMembership,
-} from "../utils/membershipService";
+import { fetchMembership, getUserMembership } from "../utils/membershipService";
 
 const ORDERS_API = "https://contemporaryworld.ipcr.gov.ng/wp-json/ipcr/v1/orders";
 
@@ -27,77 +24,100 @@ export default function PaymentScreen({ navigation }) {
 
   useEffect(() => {
     (async () => {
-      // ✅ Membership fetch
-      let data = await fetchMembership();
-      if (!data) data = await getStoredMembership();
-      else {
-        data.level_id = String(data.level_id);
-        data.level_name = data.level_name || "Premium";
-        data.enddate = Number(data.enddate?.trim?.() || data.enddate);
-      }
-      setMembership(data);
-      setLoading(false);
+      try {
+        const memData = await fetchMembership();
+        if (!memData) {
+          const storedMem = await getUserMembership();
+          setMembership(storedMem);
+        } else {
+          setMembership(memData);
+        }
 
-      // ✅ Orders fetch
-      await fetchOrders();
+        await fetchOrders();
+      } catch (err) {
+        console.error("Error loading membership:", err);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
-  const fetchOrders = async () => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) return;
+ const fetchOrders = async () => {
+  setLoadingOrders(true);
+  try {
+    // Get stored user
+    const userStr = await AsyncStorage.getItem("user");
+    const user = userStr ? JSON.parse(userStr) : null;
 
-      const res = await fetch(ORDERS_API, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) {
-        console.log("Order fetch failed:", res.status);
-        return;
-      }
-
-      const data = await res.json();
-      setOrders(Array.isArray(data?.orders) ? data.orders : []);
-    } catch (err) {
-      console.log("❌ Error fetching orders:", err);
-    } finally {
-      setLoadingOrders(false);
+    if (!user?.email || !user?.auth?.password) {
+      console.warn("No email/password found for user.");
+      setOrders([]);
+      return;
     }
-  };
 
-  // 🟢 Live RevenueCat Subscription Flow
+    // Send email + password in request body
+    const res = await fetch(ORDERS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: user.email,
+        password: user.auth.password,
+      }),
+    });
+
+    if (!res.ok) {
+      console.log("Order fetch failed:", res.status);
+      setOrders([]);
+      return;
+    }
+
+    const data = await res.json();
+
+    // Normalize response
+    if (data?.success && Array.isArray(data.orders)) {
+      setOrders(data.orders);
+    } else {
+      setOrders([]);
+    }
+  } catch (err) {
+    console.error("❌ Error fetching orders:", err);
+    setOrders([]);
+  } finally {
+    setLoadingOrders(false);
+  }
+};
+
+
   const handleSubscribe = async () => {
     try {
       setProcessing(true);
 
-      // ✅ 1. Fetch available offerings
       const offerings = await Purchases.getOfferings();
-
       if (!offerings.current || offerings.current.availablePackages.length === 0) {
         Alert.alert("Unavailable", "No subscription packages available at the moment.");
         return;
       }
 
-      // ✅ 2. Choose the first available package (you can refine later)
       const packageToBuy = offerings.current.availablePackages[0];
-
-      // ✅ 3. Start purchase
       const { customerInfo } = await Purchases.purchasePackage(packageToBuy);
 
-      // ✅ 4. Check entitlement
       const premiumEntitlement = customerInfo.entitlements.active["magazine_quarterly"];
       if (!premiumEntitlement) {
         Alert.alert("Error", "No valid entitlement found.");
         return;
       }
 
-      const expiry = premiumEntitlement.expirationDate; // ISO string
+      const expiry = premiumEntitlement.expirationDate;
       const receipt = JSON.stringify(customerInfo);
       const level_id = 2;
 
-      // ✅ 5. Send to backend
-      const token = await AsyncStorage.getItem("userToken");
+      const userStr = await AsyncStorage.getItem("user");
+      if (!userStr) {
+        Alert.alert("Error", "User not logged in.");
+        return;
+      }
+      const user = JSON.parse(userStr);
+      const token = user?.auth?.token;
       if (!token) {
         Alert.alert("Error", "User not logged in.");
         return;
@@ -118,29 +138,21 @@ export default function PaymentScreen({ navigation }) {
       const result = await response.json();
 
       if (result.success && result.membership) {
-        // ✅ Update local user info
-        const userStr = await AsyncStorage.getItem("user");
-        let user = userStr ? JSON.parse(userStr) : {};
-        user.membership_level = String(result.membership.level_id);
-        user.membership_name = result.membership.level_name;
-        user.membership_expiry = result.membership.enddate;
-        await AsyncStorage.setItem("user", JSON.stringify(user));
-
-        setMembership({
+        user.membership = {
           level_id: result.membership.level_id,
           level_name: result.membership.level_name,
           enddate: result.membership.enddate,
-        });
+        };
+        await AsyncStorage.setItem("user", JSON.stringify(user));
+        setMembership(user.membership);
 
         Alert.alert("Success", "Your Premium plan has been activated!");
-        fetchOrders(); // refresh orders
+        fetchOrders();
       } else {
         Alert.alert("Error", result.message || "Failed to update subscription.");
       }
     } catch (e) {
-      if (!e.userCancelled) {
-        Alert.alert("Purchase Error", e.message);
-      }
+      if (!e.userCancelled) Alert.alert("Purchase Error", e.message);
     } finally {
       setProcessing(false);
     }
@@ -154,45 +166,36 @@ export default function PaymentScreen({ navigation }) {
     );
   }
 
-  // ---------------- Membership Status ----------------
   const now = new Date();
-  const enddate =
-    membership?.enddate ||
-    membership?.membership_expiry ||
-    membership?.expiry ||
-    null;
-  let planTitle = membership?.level_name || membership?.membership_name || "Free";
+  let planTitle = membership?.level_name || "Free";
   let statusText = "No active plan";
   let isActive = false;
 
-  if (membership?.level_id === 1 || membership?.membership_level === "1") {
+  if (membership?.level_id === 1) {
     planTitle = "Free";
     statusText = "You're currently on the Free plan.";
   }
 
-  if (String(membership?.level_id) === "2" || String(membership?.membership_level) === "2"
-) {
-    planTitle = planTitle || "Premium";
-    if (!enddate) statusText = "No active subscription found.";
-    else {
-      let expiry;
-      const parsed = Number(enddate);
-      if (!isNaN(parsed)) {
-        expiry = parsed < 2000000000 ? new Date(parsed * 1000) : new Date(parsed);
-      } else expiry = new Date(enddate);
-      if (expiry && expiry.getTime() > now.getTime()) {
+  if (membership?.level_id === 2) {
+    if (membership.enddate) {
+      const expiry = new Date(
+        membership.enddate < 2000000000 ? membership.enddate * 1000 : membership.enddate
+      );
+      if (expiry.getTime() > now.getTime()) {
         isActive = true;
         statusText = `Your plan is active till ${expiry.toDateString()}.`;
-      } else statusText = `Your plan expired on ${expiry.toDateString()}.`;
+      } else {
+        statusText = `Your plan expired on ${expiry.toDateString()}.`;
+      }
+    } else {
+      statusText = "No active subscription found.";
     }
   }
 
   const actionLabel = isActive ? "Active Plan" : "Subscribe";
 
-  // ---------------- Render ----------------
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={28} color="#333" />
@@ -201,37 +204,23 @@ export default function PaymentScreen({ navigation }) {
         <Ionicons name="newspaper-outline" size={28} color="#333" />
       </View>
 
-      {/* Subscription Card */}
       <View style={styles.card}>
         <Text style={styles.planTitle}>{planTitle}</Text>
-        <Text
-          style={[
-            styles.status,
-            isActive && { color: "#2a5298", fontWeight: "600" },
-          ]}
-        >
+        <Text style={[styles.status, isActive && { color: "#2a5298", fontWeight: "600" }]}>
           {statusText}
         </Text>
       </View>
 
-      {/* Action Button */}
       <TouchableOpacity
         style={[styles.actionButton, (processing || isActive) && { opacity: 0.6 }]}
         onPress={handleSubscribe}
         disabled={processing || isActive}
       >
-        {processing ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.actionText}>{actionLabel}</Text>
-        )}
+        {processing ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionText}>{actionLabel}</Text>}
       </TouchableOpacity>
 
-      <Text style={styles.note}>
-        Purchases are securely handled via Play Store / App Store.
-      </Text>
+      <Text style={styles.note}>Purchases are securely handled via Play Store / App Store.</Text>
 
-      {/* Order History Section */}
       <View style={{ marginTop: 40 }}>
         <Text style={styles.orderHeader}>Order History</Text>
         {loadingOrders ? (
@@ -244,22 +233,16 @@ export default function PaymentScreen({ navigation }) {
             keyExtractor={(item) => String(item.id)}
             renderItem={({ item }) => {
               const isPaid =
-                item.status?.toLowerCase() === "success" ||
-                item.status?.toLowerCase() === "paid";
-
+                item.status?.toLowerCase() === "success" || item.status?.toLowerCase() === "paid";
               const formattedAmount = Number(item.total).toLocaleString("en-NG", {
                 style: "currency",
                 currency: "NGN",
               });
-
-              const formattedDate = new Date(item.date).toLocaleDateString(
-                "en-US",
-                {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric",
-                }
-              );
+              const formattedDate = new Date(item.date).toLocaleDateString("en-US", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              });
 
               return (
                 <View style={styles.orderCard}>
@@ -268,7 +251,6 @@ export default function PaymentScreen({ navigation }) {
                       <Text style={styles.orderTitle}>{item.membership_name}</Text>
                       <Text style={styles.orderMeta}>{formattedDate}</Text>
                     </View>
-
                     <View style={{ alignItems: "flex-end" }}>
                       <View
                         style={[
@@ -285,12 +267,7 @@ export default function PaymentScreen({ navigation }) {
                           {item.status?.toUpperCase()}
                         </Text>
                       </View>
-                      <Text
-                        style={[
-                          styles.orderMeta,
-                          { marginTop: 4, fontWeight: "600", color: "#333" },
-                        ]}
-                      >
+                      <Text style={[styles.orderMeta, { marginTop: 4, fontWeight: "600", color: "#333" }]}>
                         {formattedAmount}
                       </Text>
                     </View>
@@ -304,6 +281,8 @@ export default function PaymentScreen({ navigation }) {
     </View>
   );
 }
+
+// ---------------- Styles ----------------
 
 const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: "#F8F9FA", padding: 20 },

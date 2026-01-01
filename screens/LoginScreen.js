@@ -28,103 +28,73 @@ export default function LoginScreen({ navigation, route }) {
     }
   };
 
-  const handleLogin = async () => {
-    if (!usernameOrEmail || !password) {
-      alert("Please enter email/username and password");
+ const handleLogin = async () => {
+  if (!usernameOrEmail || !password) {
+    alert("Please enter email/username and password");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const res = await fetch(`${WP_BASE}/wp-json/ipcr/v1/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: usernameOrEmail,
+        password,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      alert(data.message || "Login failed");
       return;
     }
 
-    try {
-      setLoading(true);
+    // Normalize enddate
+    const enddate = data.membership?.enddate
+      ? parseInt(data.membership.enddate)
+      : null;
 
-      // 1️⃣ Login via JWT
-      const loginRes = await fetch(`${WP_BASE}/wp-json/jwt-auth/v1/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: usernameOrEmail, password }),
-      });
+    // ✅ Single source of truth
+// ✅ Single source of truth
+const user = {
+  id: data.user_id,
+  username: data.username,
+  email: data.email,
+  name: data.name,           // <-- use display_name from backend
+  avatar: data.avatar,       // <-- use real avatar URL from backend
 
-      const loginData = await loginRes.json();
-      if (!loginRes.ok) {
-        const msg =
-          loginData.message || loginData.error || "Login failed. Try again.";
-        alert(msg);
-        return;
-      }
+  auth: {
+    token: data.token,       // keep token for future use if needed
+    password,                // store password for API calls
+  },
 
-      const token = loginData.token;
-      await AsyncStorage.setItem("userToken", token);
+  membership: {
+    level_id: data.membership.level_id,
+    level_name: data.membership.level_name,
+    enddate,
+    source: "wordpress",
+  },
+};
 
-      // 2️⃣ Fetch WordPress profile
-      const profileRes = await fetch(`${WP_BASE}/wp-json/wp/v2/users/me`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      });
 
-      let profileData = {};
-      if (profileRes.ok) profileData = await profileRes.json();
+// 🔥 Overwrite everything in AsyncStorage
+await AsyncStorage.setItem("user", JSON.stringify(user));
 
-      // 3️⃣ Fetch membership info
-      const memRes = await fetch(`${WP_BASE}/wp-json/ipcr/v1/membership`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
+console.log("✅ User synced with password:", user);
 
-      let memData = {};
-      if (memRes.ok) memData = await memRes.json();
 
-      // Normalize membership enddate (timestamp)
-      const normalizedEndDate = memData.enddate
-        ? parseInt(memData.enddate)
-        : null;
-
-      // 4️⃣ Build user object
-      const userObj = {
-        token,
-        user_id: profileData.id || memData.user_id || null,
-        username: profileData.slug || memData.username || usernameOrEmail,
-        email: profileData.email || memData.email || null,
-        name: profileData.name || memData.name || usernameOrEmail,
-        avatar:
-          memData.avatar ||
-          profileData.avatar_urls?.["96"] ||
-          "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-        membership_level: memData.level_id ?? 0,
-        membership_name: memData.level_name ?? "Free",
-        membership_expiry: normalizedEndDate,
-      };
-
-      // 5️⃣ Build membership object (same shape used by fetchMembership)
-      const membershipObj = {
-        level_id: userObj.membership_level,
-        level_name: userObj.membership_name,
-        enddate: userObj.membership_expiry,
-        email: userObj.email,
-        name: userObj.name,
-        avatar: userObj.avatar,
-      };
-
-      // 6️⃣ Save both
-      await AsyncStorage.setItem("user", JSON.stringify(userObj));
-      await AsyncStorage.setItem("membership", JSON.stringify(membershipObj));
-
-      console.log("✅ User + Membership synced:", {
-        user: userObj,
-        membership: membershipObj,
-      });
-
-      // 7️⃣ Redirect to main screen
-      await handleRedirectAfterAuth();
-    } catch (err) {
-      console.error("Login Error:", err);
-      alert("Something went wrong. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
+    await handleRedirectAfterAuth();
+  } catch (err) {
+    console.error("Login Error:", err);
+    alert("Something went wrong. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView
