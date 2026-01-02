@@ -2,12 +2,8 @@ import { savePosts } from "./db";
 import { encode as btoa } from "base-64"; // ✅ for React Native
 import { safeFetch } from "../utils/fetchWrapper";
 
-const BASE_URL = "https://contemporaryworld.ipcr.gov.ng/wp-json/wp/v2";
-
-// 🔑 Basic Auth credentials (move to env vars in production)
-const USERNAME = "ipcrcontemporaryadmin";
-const PASSWORD = "SRsd 35pE aQIA yNvZ cz5f aOQJ";
-const AUTH_HEADER = "Basic " + btoa(`${USERNAME}:${PASSWORD}`);
+//const BASE_URL = "https://contemporaryworld.ipcr.gov.ng/wp-json/wp/v2";
+const BASE_URL = "https://contemporaryworld.ipcr.gov.ng/wp-json/ipcr/v1";
 
 /**
  * Fetch from WP REST API using Basic Auth
@@ -18,8 +14,6 @@ async function fetchFromApi(endpoint) {
 
     const data = await safeFetch(endpoint, {
       headers: {
-        Authorization: AUTH_HEADER,
-        "Content-Type": "application/json",
         Accept: "application/json",
         "User-Agent": "ReactNativeApp/1.0",
       },
@@ -32,37 +26,16 @@ async function fetchFromApi(endpoint) {
   }
 }
 
-/**
- * Normalize WP post → SQLite-friendly object
- */
-function normalizePost(post) {
-  return {
-    id: post.id,
-    title: post.title?.rendered || "",
-    slug: post.slug,
-    excerpt: post.excerpt?.rendered || "",
-    content: post.content?.rendered || "",
-    image: post._embedded?.["wp:featuredmedia"]?.[0]?.source_url ?? null,
-    category: post._embedded?.["wp:term"]?.[0]?.[0]?.name ?? "Uncategorized",
-    author: post._embedded?.author?.[0]?.name ?? "Unknown",
-    authorImage: post._embedded?.author?.[0]?.avatar_urls?.["48"] ?? null,
-    date: post.date,
-    modified: post.modified,
-    views: post.views ?? post.meta?.views ?? 0,
-  };
-}
-
 
 /**
  * Fetch latest posts
  */
 export async function fetchPosts(limit = 30) {
-  const raw = await fetchFromApi(
-    `${BASE_URL}/posts?per_page=${limit}&_embed&orderby=date&order=desc`
-  );
+  const raw = await fetchFromApi(`${BASE_URL}/posts?per_page=${limit}`);
   if (!Array.isArray(raw)) return [];
-  return raw.map(normalizePost);
+  return raw;
 }
+
 
 /**
  * Sync posts into SQLite
@@ -104,13 +77,8 @@ export async function refreshPostsInBackground(limit = 10) {
  * Fetch single post by ID
  */
 export async function fetchSinglePost(id) {
-  try {
-    const raw = await fetchFromApi(`${BASE_URL}/posts/${id}?_embed`);
-    if (!raw) return null;
-    return normalizePost(raw);
-  } catch (err) {
-    console.error("fetchSinglePost error:", err.message);
-    return null;
-  }
+  const posts = await fetchPosts(50);
+  return posts.find(p => p.id === id) ?? null;
 }
+
 

@@ -5,15 +5,27 @@ import SectionHeader from './SectionHeader';
 export default function RecommendedList({ data, onSeeMore, onPressItem }) {
   const renderItem = ({ item }) => (
     <TouchableOpacity style={styles.card} onPress={() => onPressItem(item)}>
-      <Image source={{ uri: item.image }} style={styles.image} />
+      <Image
+        source={{ uri: item.image || 'https://via.placeholder.com/600x400' }}
+        style={styles.image}
+      />
+
+
       <View style={styles.info}>
         <Text style={styles.category}>{item.category}</Text>
         <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
         <View style={styles.metaRow}>
-          <Image source={{ uri: item.authorImage }} style={styles.authorImage} />
+          <Image
+            source={{ uri: item.authorImage || 'https://via.placeholder.com/48' }}
+            style={styles.authorImage}
+          />
+
           <Text style={styles.author}>{item.author}</Text>
           <Text style={styles.dot}>•</Text>
-          <Text style={styles.date}>{item.date}</Text>
+          <Text style={styles.date}>
+            {new Date(item.date).toDateString()}
+          </Text>
+
         </View>
       </View>
     </TouchableOpacity>
